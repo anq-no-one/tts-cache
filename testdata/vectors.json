@@ -1,0 +1,14 @@
+[
+  {"input": "  Rest   for 30 seconds . ", "normalized": "rest for 30 seconds."},
+  {"input": "REST FOR 30 SECONDS.", "normalized": "rest for 30 seconds."},
+  {"input": "Next up is 12 reps of push ups", "normalized": "next up is 12 reps of push ups"},
+  {"input": "Get ready  for 45 seconds  of running.", "normalized": "get ready for 45 seconds of running."},
+  {"input": "Three... two... one", "normalized": "three... two... one"},
+  {"input": "Circuit one.  This circuit has two rounds.", "normalized": "circuit one. this circuit has two rounds."},
+  {"input": "Your heart rate is 120 beats per minute.", "normalized": "your heart rate is 120 beats per minute."},
+  {"input": "Start 20 reps  of squats", "normalized": "start 20 reps of squats"},
+  {"input": "", "normalized": ""},
+  {"input": "   ", "normalized": ""},
+  {"input": "Hello,   world .", "normalized": "hello, world."},
+  {"input": "Quick Hiit circuit.", "normalized": "quick hiit circuit."}
+]

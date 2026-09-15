@@ -1,0 +1,17 @@
+services:
+  tts-cache:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      UPSTREAM_BASE_URL: "https://api.fish.audio/compat/elevenlabs/v1"
+      UPSTREAM_API_KEY: "${UPSTREAM_API_KEY:?set UPSTREAM_API_KEY in env}"
+      DEFAULT_MODEL: "fish-audio/s2.1-pro"
+      DEFAULT_FORMAT: "mp3_44100_128"
+      DEFAULT_LANG: "en"
+      UPSTREAM_TIMEOUT_SEC: "30"
+    volumes:
+      - tts-data:/app/data
+
+volumes:
+  tts-data:
