@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/anq-no-one/tts-cache-proxy/internal/cache"
-	"github.com/anq-no-one/tts-cache-proxy/internal/upstream"
+	"github.com/anq-no-one/tts-cache/proxy/internal/cache"
+	"github.com/anq-no-one/tts-cache/proxy/internal/upstream"
 )
 
 type Config struct {

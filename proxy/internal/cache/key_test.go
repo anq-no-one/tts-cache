@@ -3,7 +3,7 @@ package cache_test
 import (
 	"testing"
 
-	"github.com/anq-no-one/tts-cache-proxy/internal/cache"
+	"github.com/anq-no-one/tts-cache/proxy/internal/cache"
 )
 
 func base() cache.Params {

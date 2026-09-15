@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/anq-no-one/tts-cache-proxy/internal/cache"
+	"github.com/anq-no-one/tts-cache/proxy/internal/cache"
 )
 
 func TestSharedVectors(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "vectors.json"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "vectors", "vectors.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

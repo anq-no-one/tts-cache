@@ -6,9 +6,9 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/anq-no-one/tts-cache-proxy/internal/cache"
-	proxyhttp "github.com/anq-no-one/tts-cache-proxy/internal/http"
-	"github.com/anq-no-one/tts-cache-proxy/internal/upstream"
+	"github.com/anq-no-one/tts-cache/proxy/internal/cache"
+	proxyhttp "github.com/anq-no-one/tts-cache/proxy/internal/http"
+	"github.com/anq-no-one/tts-cache/proxy/internal/upstream"
 )
 
 func env(key, fallback string) string {

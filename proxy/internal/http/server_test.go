@@ -8,9 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/anq-no-one/tts-cache-proxy/internal/cache"
-	proxyhttp "github.com/anq-no-one/tts-cache-proxy/internal/http"
-	"github.com/anq-no-one/tts-cache-proxy/internal/upstream"
+	"github.com/anq-no-one/tts-cache/proxy/internal/cache"
+	proxyhttp "github.com/anq-no-one/tts-cache/proxy/internal/http"
+	"github.com/anq-no-one/tts-cache/proxy/internal/upstream"
 )
 
 type fakeSynth struct {
