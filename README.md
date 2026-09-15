@@ -24,6 +24,12 @@ normalized text, voice id, model id, speed, output format, language.
 Everything else (timeouts, API keys, cache size, retries) never
 touches the key. Scheme is `v1`.
 
+## Docs
+
+- `docs/idea.md` — what the project is and why.
+- `docs/decisions/` — accepted decisions 0001 to 0008.
+- `docs/plan-next.md` — plan for the next session.
+
 ## Quick start
 
 Proxy:
