@@ -206,7 +206,9 @@ func TestSplitSentences(t *testing.T) {
 
 func TestSynthesizeRequiresBearerToken(t *testing.T) {
 	dir := t.TempDir()
-	srv, token := newTestServer(t, testConfig(dir), &fakeSynth{})
+	cfg := testConfig(dir)
+	cfg.Region = "eu-west"
+	srv, token := newTestServer(t, cfg, &fakeSynth{})
 
 	if code, header, _ := postRaw(t, srv, "", "Hello."); code != http.StatusUnauthorized {
 		t.Fatalf("missing token must be 401, got %d", code)
