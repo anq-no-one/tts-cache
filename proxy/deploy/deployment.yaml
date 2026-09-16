@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tts-cache
+  labels:
+    app: tts-cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tts-cache
+  template:
+    metadata:
+      labels:
+        app: tts-cache
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: tts-cache
+          image: tts-cache-proxy:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: CACHE_DIR
+              value: "/app/data"
+            - name: UPSTREAM_BASE_URL
+              value: "https://api.fish.audio/compat/elevenlabs/v1"
+            - name: UPSTREAM_API_KEY
+              value: ""
+            - name: DEFAULT_MODEL
+              value: "fish-audio/s2.1-pro"
+            - name: DEFAULT_FORMAT
+              value: "mp3_44100_128"
+            - name: DEFAULT_LANG
+              value: "en"
+            - name: UPSTREAM_TIMEOUT_SEC
+              value: "30"
+            - name: MAX_TEXT_CHARS
+              value: "5000"
+            - name: REQUEST_TIMEOUT_SEC
+              value: "60"
+            - name: RATE_PER_MIN
+              value: "60"
+            - name: INVITE_CODES
+              value: ""
+            - name: ADMIN_TOKEN
+              value: ""
+            - name: CACHE_MAX_BYTES
+              value: "0"
+            - name: REGION
+              value: ""
+          volumeMounts:
+            - name: cache
+              mountPath: /app/data
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+      volumes:
+        - name: cache
+          persistentVolumeClaim:
+            claimName: tts-cache-data

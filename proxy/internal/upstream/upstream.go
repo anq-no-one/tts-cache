@@ -2,6 +2,7 @@ package upstream
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,14 +23,16 @@ type Request struct {
 }
 
 type Synthesizer interface {
-	Synthesize(r Request) ([]byte, error)
+	Synthesize(ctx context.Context, r Request) ([]byte, error)
 }
 
 type ElevenLabsCompat struct {
 	Client *http.Client
 }
 
-func (e ElevenLabsCompat) Synthesize(r Request) ([]byte, error) {
+var _ Synthesizer = ElevenLabsCompat{}
+
+func (e ElevenLabsCompat) Synthesize(ctx context.Context, r Request) ([]byte, error) {
 	if e.Client == nil {
 		e.Client = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -39,7 +42,7 @@ func (e ElevenLabsCompat) Synthesize(r Request) ([]byte, error) {
 		"model_id":       r.ModelID,
 		"voice_settings": map[string]any{"speed": r.Speed},
 	})
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

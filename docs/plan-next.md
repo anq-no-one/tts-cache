@@ -1,7 +1,7 @@
 ## Goal
 
 Turn the current MVP into a proxy the new session can deploy to one
-host and connect to the Shred app, with Android and web clients able
+host and connect to a consumer app, with Android and web clients able
 to follow without server changes.
 
 ## Success Criteria
@@ -35,7 +35,7 @@ to follow without server changes.
   (decision 0007). Ship region-ready, not multi-region.
 - No breaking change to the `/v1/synthesize` request shape; additive
   fields and headers only.
-- No provider keys on devices beyond what the Shred app already holds.
+- No provider keys on devices beyond what the consumer app already holds.
 
 ## Key Decisions
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,20 +20,44 @@ type Meta struct {
 	Bytes      int64     `json:"bytes"`
 }
 
-type Store struct {
+type Store interface {
+	Get(key string) ([]byte, bool)
+	Put(key string, audio []byte, meta Meta) error
+	Evictions() int64
+	Bytes() int64
+}
+
+type DiskStore struct {
 	mu  sync.Mutex
 	dir string
 	mem map[string][]byte
+
+	MaxBytes int64
+
+	sizes      map[string]int64
+	lastAccess map[string]time.Time
+	totalBytes int64
+	evictions  int64
 }
 
-func NewStore(dir string) *Store {
-	return &Store{dir: dir, mem: map[string][]byte{}}
+var _ Store = (*DiskStore)(nil)
+
+func NewStore(dir string) *DiskStore {
+	s := &DiskStore{
+		dir:        dir,
+		mem:        map[string][]byte{},
+		sizes:      map[string]int64{},
+		lastAccess: map[string]time.Time{},
+	}
+	s.rebuildLocked()
+	return s
 }
 
-func (s *Store) Get(key string) ([]byte, bool) {
+func (s *DiskStore) Get(key string) ([]byte, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if b, ok := s.mem[key]; ok {
+		s.touchLocked(key)
 		return b, true
 	}
 	p := filepath.Join(s.dir, Filename(key))
@@ -41,11 +66,15 @@ func (s *Store) Get(key string) ([]byte, bool) {
 		return nil, false
 	}
 	s.mem[key] = b
-	s.bumpHitsLocked(key)
+	if _, ok := s.sizes[key]; !ok {
+		s.totalBytes += int64(len(b))
+		s.sizes[key] = int64(len(b))
+	}
+	s.touchLocked(key)
 	return b, true
 }
 
-func (s *Store) Put(key string, audio []byte, meta Meta) error {
+func (s *DiskStore) Put(key string, audio []byte, meta Meta) error {
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		return err
 	}
@@ -66,12 +95,112 @@ func (s *Store) Put(key string, audio []byte, meta Meta) error {
 		return err
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if old, ok := s.sizes[key]; ok {
+		s.totalBytes -= old
+	}
 	s.mem[key] = audio
-	s.mu.Unlock()
+	s.sizes[key] = int64(len(audio))
+	s.lastAccess[key] = meta.LastAccess
+	s.totalBytes += int64(len(audio))
+	s.evictLocked(key)
 	return nil
 }
 
-func (s *Store) bumpHitsLocked(key string) {
+func (s *DiskStore) Evictions() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.evictions
+}
+
+func (s *DiskStore) Bytes() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.totalBytes
+}
+
+func (s *DiskStore) evictLocked(except string) {
+	if s.MaxBytes <= 0 {
+		return
+	}
+	for s.totalBytes > s.MaxBytes {
+		victim := ""
+		for k, t := range s.lastAccess {
+			if k == except {
+				continue
+			}
+			if victim == "" || t.Before(s.lastAccess[victim]) ||
+				(t.Equal(s.lastAccess[victim]) && k < victim) {
+				victim = k
+			}
+		}
+		if victim == "" {
+			return
+		}
+		s.removeLocked(victim)
+		s.evictions++
+	}
+}
+
+func (s *DiskStore) removeLocked(key string) {
+	delete(s.mem, key)
+	if sz, ok := s.sizes[key]; ok {
+		s.totalBytes -= sz
+		delete(s.sizes, key)
+	}
+	delete(s.lastAccess, key)
+	_ = os.Remove(filepath.Join(s.dir, Filename(key)))
+	_ = os.Remove(filepath.Join(s.dir, MetaFilename(key)))
+}
+
+func (s *DiskStore) rebuildLocked() {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".mp3") {
+			continue
+		}
+		key := strings.TrimSuffix(name, ".mp3")
+		info, err := e.Info()
+		var size int64
+		var mtime time.Time
+		if err == nil {
+			size = info.Size()
+			mtime = info.ModTime()
+		} else {
+			st, err := os.Stat(filepath.Join(s.dir, name))
+			if err != nil {
+				continue
+			}
+			size = st.Size()
+			mtime = st.ModTime()
+		}
+		last := mtime
+		if raw, err := os.ReadFile(filepath.Join(s.dir, MetaFilename(key))); err == nil {
+			var m Meta
+			if json.Unmarshal(raw, &m) == nil && !m.LastAccess.IsZero() {
+				last = m.LastAccess
+			}
+		}
+		s.sizes[key] = size
+		s.lastAccess[key] = last
+		s.totalBytes += size
+	}
+}
+
+func (s *DiskStore) touchLocked(key string) {
+	now := time.Now().UTC()
+	s.lastAccess[key] = now
+	s.bumpHitsLocked(key, now)
+}
+
+func (s *DiskStore) bumpHitsLocked(key string, now time.Time) {
 	p := filepath.Join(s.dir, MetaFilename(key))
 	raw, err := os.ReadFile(p)
 	if err != nil {
@@ -82,7 +211,7 @@ func (s *Store) bumpHitsLocked(key string) {
 		return
 	}
 	m.Hits++
-	m.LastAccess = time.Now().UTC()
+	m.LastAccess = now
 	out, err := json.Marshal(m)
 	if err != nil {
 		return

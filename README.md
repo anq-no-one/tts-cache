@@ -13,9 +13,17 @@ the app sounds.
 - `swift/` — Swift package `TTSCache`. Sentence splitting,
   normalization, key computation, request building. See
   `swift/README.md`.
-- `vectors/vectors.json` — shared normalization vectors. Both test
-  suites read this one file. Change it and both suites fail until Go
-  and Swift agree again.
+- `kotlin/` — JVM SDK mirroring the same contract. See
+  `kotlin/README.md`.
+- `js/` — zero-dependency Node.js client. See `js/README.md`.
+- `vectors/vectors.json` — shared normalization vectors. Every test
+  suite reads this one file. Change it and all suites fail until Go,
+  Swift, Kotlin, and JS agree again.
+- `docs/deploy.md` — fastest path from a fresh host to serving.
+- `docs/architecture.md` — code and deployment architecture.
+- `CHANGELOG.md` — user-visible changes.
+- `CONTRIBUTING.md` — contributor notes.
+- `LICENSE` — MIT.
 
 ## Cache key
 
@@ -31,6 +39,9 @@ touches the key. Scheme is `v1`.
 - `docs/plan-next.md` — plan for the next session.
 
 ## Quick start
+
+New host? Skip this section and follow `docs/deploy.md`, the fastest
+path from zero to serving.
 
 Proxy:
 

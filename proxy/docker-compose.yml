@@ -4,14 +4,24 @@ services:
     ports:
       - "8080:8080"
     environment:
+      PORT: "8080"
+      CACHE_DIR: "/app/data"
       UPSTREAM_BASE_URL: "https://api.fish.audio/compat/elevenlabs/v1"
       UPSTREAM_API_KEY: "${UPSTREAM_API_KEY:?set UPSTREAM_API_KEY in env}"
       DEFAULT_MODEL: "fish-audio/s2.1-pro"
       DEFAULT_FORMAT: "mp3_44100_128"
       DEFAULT_LANG: "en"
-      UPSTREAM_TIMEOUT_SEC: "30"
+      UPSTREAM_TIMEOUT_SEC: "${UPSTREAM_TIMEOUT_SEC:-30}"
+      MAX_TEXT_CHARS: "${MAX_TEXT_CHARS:-5000}"
+      REQUEST_TIMEOUT_SEC: "${REQUEST_TIMEOUT_SEC:-60}"
+      RATE_PER_MIN: "${RATE_PER_MIN:-60}"
+      INVITE_CODES: "${INVITE_CODES:-}"
+      ADMIN_TOKEN: "${ADMIN_TOKEN:-}"
+      CACHE_MAX_BYTES: "${CACHE_MAX_BYTES:-0}"
+      REGION: "${REGION:-}"
     volumes:
       - tts-data:/app/data
+    restart: unless-stopped
 
 volumes:
   tts-data:

@@ -3,10 +3,10 @@ WORKDIR /src
 COPY go.mod ./
 COPY cmd ./cmd
 COPY internal ./internal
-RUN go build -o /out/tts-cache-proxy ./cmd/server
+RUN CGO_ENABLED=0 go build -trimpath -o /out/tts-cache-proxy ./cmd/server
 
 FROM alpine:3.20
-RUN adduser -D app
+RUN apk add --no-cache ca-certificates && adduser -D app
 USER app
 WORKDIR /app
 COPY --from=build /out/tts-cache-proxy /app/tts-cache-proxy

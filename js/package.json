@@ -1,0 +1,13 @@
+{
+  "name": "tts-cache",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "JavaScript client for the tts-cache proxy",
+  "main": "src/tts-cache.mjs",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
