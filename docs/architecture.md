@@ -71,3 +71,37 @@ Token model:
 - What horizontal scale inside one region needs: the shared-storage
   change from `0009` (common object storage behind the current store
   interface), then two or more hosts behind any TCP load balancer.
+
+## Diagrams
+
+See `docs/architecture.svg` for the overview picture (request flow,
+fallback chain, two-region topology). The flowchart below covers the
+synthesize path including partial `206` and the client fallback.
+
+```mermaid
+flowchart TD
+    APP["Consumer app + thin SDK<br/>(Swift TTSClient / Kotlin / JS)"] -->|POST /v1/synthesize<br/>Bearer app token| PROXY["Go proxy"]
+    PROXY --> SPLIT["Split text into sentences<br/>(server list is authoritative)"]
+    SPLIT --> PER["Per sentence, own goroutine:<br/>cache lookup on disk LRU"]
+    PER -->|hit| CONCAT["Concatenate available audio in order"]
+    PER -->|miss| SINGLE["Singleflight: coalesce<br/>identical in-flight sentences"]
+    SINGLE --> UP["Upstream ElevenLabs-compatible<br/>synthesis + store on disk"]
+    UP -->|synthesized| CONCAT
+    UP -->|failed| PARTIAL{"How many sentences failed?"}
+    CONCAT --> PARTIAL
+    PARTIAL -->|none| R200["200 audio/mpeg<br/>X-Sentence-Statuses all hit/synthesized"]
+    PARTIAL -->|some| R206["206 Partial Content<br/>available audio + per-sentence error entries"]
+    PARTIAL -->|all| R502["502, no audio"]
+    R502 --> FB1["Fallback: next region endpoint<br/>(GET /healthz latency order, X-Region tags server)"]
+    R200 --> DONE["SDK reports audio source"]
+    R206 --> DONE
+    FB1 -->|regions exhausted| FB2["Fallback: direct provider<br/>(app-owned key)"]
+    FB2 -->|direct failed or unset| FB3["Fallback: system voice"]
+    FB3 --> DONE
+    subgraph CTRL["Control plane"]
+        REG["POST /v1/register (invite-gated, 201)"]
+        REV["DELETE /v1/tokens/{id} (admin token, 204)"]
+        HZ["GET /healthz → ok"]
+        MET["GET /metrics (JSON)"]
+    end
+```
