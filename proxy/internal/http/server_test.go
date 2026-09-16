@@ -208,8 +208,10 @@ func TestSynthesizeRequiresBearerToken(t *testing.T) {
 	dir := t.TempDir()
 	srv, token := newTestServer(t, testConfig(dir), &fakeSynth{})
 
-	if code, _, _ := postRaw(t, srv, "", "Hello."); code != http.StatusUnauthorized {
+	if code, header, _ := postRaw(t, srv, "", "Hello."); code != http.StatusUnauthorized {
 		t.Fatalf("missing token must be 401, got %d", code)
+	} else if got := header.Get("X-Region"); got != "eu-west" {
+		t.Fatalf("401 must keep X-Region, got %q", got)
 	}
 	if code, _, _ := postRaw(t, srv, "wrong", "Hello."); code != http.StatusUnauthorized {
 		t.Fatalf("bad token must be 401, got %d", code)

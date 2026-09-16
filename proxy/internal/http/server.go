@@ -181,6 +181,7 @@ func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSynthesize(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("X-Region", s.cfg.Region)
 	token, ok := s.tokens.Validate(bearerToken(r))
 	if !ok {
 		s.authErrors.Add(1)
@@ -294,7 +295,6 @@ func (s *Server) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 	}
 	rawStatuses, _ := json.Marshal(statuses)
 	w.Header().Set("Content-Type", "audio/mpeg")
-	w.Header().Set("X-Region", s.cfg.Region)
 	w.Header().Set("X-Cache-Key-Version", cache.KeyVersion)
 	w.Header().Set("X-Sentence-Count", strconv.Itoa(len(sentences)))
 	w.Header().Set("X-Sentence-Statuses", string(rawStatuses))
