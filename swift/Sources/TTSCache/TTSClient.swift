@@ -32,12 +32,14 @@ public struct SynthResult: Sendable, Equatable {
     public let source: AudioSource
     public let failure: ProxyFailure?
     public let sentenceStatuses: [SentenceStatus]
+    public let region: String?
 
-    public init(audio: Data, source: AudioSource, failure: ProxyFailure?, sentenceStatuses: [SentenceStatus]) {
+    public init(audio: Data, source: AudioSource, failure: ProxyFailure?, sentenceStatuses: [SentenceStatus], region: String? = nil) {
         self.audio = audio
         self.source = source
         self.failure = failure
         self.sentenceStatuses = sentenceStatuses
+        self.region = region
     }
 }
 
@@ -91,13 +93,22 @@ public struct TTSClient: Sendable {
                 }
                 switch http.statusCode {
                 case 200..<300:
-                    return SynthResult(audio: data, source: .proxy, failure: nil, sentenceStatuses: Self.sentenceStatuses(from: http))
+                    return SynthResult(
+                        audio: data,
+                        source: .proxy,
+                        failure: nil,
+                        sentenceStatuses: Self.sentenceStatuses(from: http),
+                        region: Self.region(from: http)
+                    )
+                case 429:
+                    lastFailure = ProxyFailure(host: Self.host(of: endpoint), statusCode: http.statusCode, latencyMs: elapsedMs)
                 case 400..<500:
                     return SynthResult(
                         audio: Data(),
                         source: .proxy,
                         failure: ProxyFailure(host: Self.host(of: endpoint), statusCode: http.statusCode, latencyMs: elapsedMs),
-                        sentenceStatuses: Self.sentenceStatuses(from: http)
+                        sentenceStatuses: Self.sentenceStatuses(from: http),
+                        region: Self.region(from: http)
                     )
                 default:
                     lastFailure = ProxyFailure(host: Self.host(of: endpoint), statusCode: http.statusCode, latencyMs: elapsedMs)
@@ -116,6 +127,13 @@ public struct TTSClient: Sendable {
             }
         }
         return SynthResult(audio: Data(), source: .system, failure: lastFailure, sentenceStatuses: [])
+    }
+
+    static func region(from response: HTTPURLResponse) -> String? {
+        guard let raw = response.value(forHTTPHeaderField: "X-Region"), !raw.isEmpty else {
+            return nil
+        }
+        return raw
     }
 
     static func sentenceStatuses(from response: HTTPURLResponse) -> [SentenceStatus] {
@@ -152,7 +170,8 @@ public struct TTSClient: Sendable {
                         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                             return (endpoint, .infinity)
                         }
-                        return (endpoint, Date().timeIntervalSince(started) * 1000)
+                        let ms = Date().timeIntervalSince(started) * 1000
+                        return (endpoint, ms.rounded())
                     } catch {
                         return (endpoint, .infinity)
                     }

@@ -25,15 +25,15 @@ type Token struct {
 
 type Store struct {
 	mu      sync.Mutex
-	dir     string
+	path    string
 	invites map[string]bool
 	byID    map[string]*Token
 	byHash  map[string]*Token
 }
 
-func NewStore(dir string, invites []string) *Store {
+func NewStore(path string, invites []string) *Store {
 	s := &Store{
-		dir:     dir,
+		path:    path,
 		invites: map[string]bool{},
 		byID:    map[string]*Token{},
 		byHash:  map[string]*Token{},
@@ -103,7 +103,7 @@ func (s *Store) Revoke(id string) bool {
 }
 
 func (s *Store) file() string {
-	return filepath.Join(s.dir, "tokens.json")
+	return s.path
 }
 
 func (s *Store) load() {
@@ -122,7 +122,7 @@ func (s *Store) load() {
 }
 
 func (s *Store) saveLocked() error {
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
 	tokens := make([]*Token, 0, len(s.byID))

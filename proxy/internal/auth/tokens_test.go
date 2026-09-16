@@ -1,11 +1,12 @@
 package auth
 
 import (
+	"path/filepath"
 	"testing"
 )
 
 func TestIssueValidateRevoke(t *testing.T) {
-	s := NewStore(t.TempDir(), []string{"invite-1"})
+	s := NewStore(filepath.Join(t.TempDir(), "tokens.json"), []string{"invite-1"})
 	id, raw, err := s.Issue("invite-1", "app-a")
 	if err != nil {
 		t.Fatalf("issue: %v", err)
@@ -35,12 +36,12 @@ func TestIssueValidateRevoke(t *testing.T) {
 
 func TestTokensSurviveReload(t *testing.T) {
 	dir := t.TempDir()
-	s := NewStore(dir, []string{"invite-1"})
+	s := NewStore(filepath.Join(dir, "tokens.json"), []string{"invite-1"})
 	_, raw, err := s.Issue("invite-1", "app-a")
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
-	again := NewStore(dir, []string{"invite-1"})
+	again := NewStore(filepath.Join(dir, "tokens.json"), []string{"invite-1"})
 	if _, ok := again.Validate(raw); !ok {
 		t.Fatal("token must validate after reload")
 	}

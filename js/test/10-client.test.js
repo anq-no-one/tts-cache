@@ -117,19 +117,132 @@ describe('proxy client networking', () => {
     assert.equal(results.find((row) => row.endpoint === 'https://down.example').ok, false);
   });
 
-  it('throws with host detail after every endpoint fails', async () => {
-    const fetchImpl = async () => ({ ok: false, status: 502, headers: headersOf({}) });
+  it('retries the next endpoint on 429', async () => {
+    const calls = [];
+    const fetchImpl = async (url) => {
+      calls.push(url);
+      if (url.startsWith('https://a.example')) return proxyResponse({ status: 429 });
+      return proxyResponse({ statuses: synthStatuses, count: 2 });
+    };
     const client = new Client({
       endpoints: ['https://a.example', 'https://b.example'],
       appToken: APP_TOKEN,
       fetchImpl,
     });
 
-    await assert.rejects(() => client.synthesize('Hi.', { voiceId: 'v1' }), (error) => {
-      assert.match(error.message, /a\.example/);
-      assert.match(error.message, /b\.example/);
-      assert.equal(error.failures.length, 2);
-      return true;
+    const result = await client.synthesize('Hi.', { voiceId: 'v1' });
+
+    assert.deepEqual(calls, ['https://a.example/v1/synthesize', 'https://b.example/v1/synthesize']);
+    assert.equal(result.source, 'proxy');
+    assert.equal(result.endpoint, 'https://b.example');
+  });
+
+  it('returns a 4xx failure immediately without further endpoints or direct fallback', async () => {
+    const calls = [];
+    const fetchImpl = async (url) => {
+      calls.push(url);
+      return proxyResponse({ status: 401 });
+    };
+    let directCalls = 0;
+    const client = new Client({
+      endpoints: ['https://a.example', 'https://b.example'],
+      appToken: APP_TOKEN,
+      fetchImpl,
+      directFetch: async () => {
+        directCalls += 1;
+        return audioBytes(7);
+      },
     });
+
+    const result = await client.synthesize('Hi.', { voiceId: 'v1' });
+
+    assert.deepEqual(calls, ['https://a.example/v1/synthesize']);
+    assert.equal(directCalls, 0);
+    assert.equal(result.source, 'proxy');
+    assert.equal(result.audio.byteLength, 0);
+    assert.equal(result.endpoint, 'https://a.example');
+    assert.equal(result.failures.length, 1);
+    assert.equal(result.failures[0].endpoint, 'https://a.example');
+    assert.equal(result.failures[0].code, 401);
+    assert.equal(typeof result.failures[0].latencyMs, 'number');
+  });
+
+  it('returns system silence with host detail after every endpoint fails', async () => {
+    const fetchImpl = async () => proxyResponse({ status: 502 });
+    const client = new Client({
+      endpoints: ['https://a.example', 'https://b.example'],
+      appToken: APP_TOKEN,
+      fetchImpl,
+    });
+
+    const result = await client.synthesize('Hi.', { voiceId: 'v1' });
+
+    assert.equal(result.source, 'system');
+    assert.equal(result.audio.byteLength, 0);
+    assert.equal(result.failures.length, 2);
+    assert.deepEqual(result.failures.map((entry) => entry.endpoint), ['https://a.example', 'https://b.example']);
+    assert.deepEqual(result.failures.map((entry) => entry.code), [502, 502]);
+  });
+
+  it('returns direct audio when all endpoints fail and directFetch is set', async () => {
+    const fetchImpl = async () => proxyResponse({ status: 503 });
+    const seen = [];
+    const client = new Client({
+      endpoints: ['https://a.example', 'https://b.example'],
+      appToken: APP_TOKEN,
+      fetchImpl,
+      directFetch: async (text) => {
+        seen.push(text);
+        return audioBytes(7, 8);
+      },
+    });
+
+    const result = await client.synthesize('Hi there.', { voiceId: 'v1' });
+
+    assert.deepEqual(seen, ['Hi there.']);
+    assert.equal(result.source, 'direct');
+    assert.deepEqual(Array.from(new Uint8Array(result.audio)), [7, 8]);
+    assert.equal(result.endpoint, null);
+    assert.equal(result.failures.length, 2);
+  });
+
+  it('returns system silence when directFetch throws', async () => {
+    const fetchImpl = async () => proxyResponse({ status: 500 });
+    const client = new Client({
+      endpoints: ['https://a.example'],
+      appToken: APP_TOKEN,
+      fetchImpl,
+      directFetch: async () => {
+        throw new Error('provider key revoked');
+      },
+    });
+
+    const result = await client.synthesize('Hi.', { voiceId: 'v1' });
+
+    assert.equal(result.source, 'system');
+    assert.equal(result.audio.byteLength, 0);
+    assert.equal(result.failures.length, 1);
+  });
+
+  it('serves a direct repeat from memory without a second directFetch', async () => {
+    const fetchImpl = async () => proxyResponse({ status: 500 });
+    let directCalls = 0;
+    const client = new Client({
+      endpoints: ['https://a.example'],
+      appToken: APP_TOKEN,
+      fetchImpl,
+      directFetch: async () => {
+        directCalls += 1;
+        return audioBytes(4, 5);
+      },
+    });
+
+    const first = await client.synthesize('Hi.', { voiceId: 'v1' });
+    const second = await client.synthesize('Hi.', { voiceId: 'v1' });
+
+    assert.equal(directCalls, 1);
+    assert.equal(first.source, 'direct');
+    assert.equal(second.source, 'memory');
+    assert.deepEqual(Array.from(new Uint8Array(second.audio)), [4, 5]);
   });
 });

@@ -19,19 +19,19 @@ export function speedKey(speed) {
   return value.toFixed(3);
 }
 
-function firstDefined(...values) {
-  return values.find((value) => value !== undefined && value !== null) ?? '';
+function textField(value) {
+  return String(value ?? '').trim();
 }
 
-export function cacheKey(params = {}) {
+export function cacheKey({ text = '', voiceId = '', modelId = '', speed, format = '', language = '' } = {}) {
   const parts = [
     KEY_VERSION,
-    normalize(firstDefined(params.text)),
-    String(firstDefined(params.voiceId, params.voiceID)).trim(),
-    String(firstDefined(params.modelId, params.modelID)).trim(),
-    speedKey(firstDefined(params.speed, 0)),
-    String(firstDefined(params.format, params.outputFormat)).trim(),
-    String(firstDefined(params.language, params.lang)).trim(),
+    normalize(text),
+    textField(voiceId),
+    textField(modelId),
+    speedKey(speed),
+    textField(format),
+    textField(language),
   ];
   const hex = createHash('sha256').update(parts.join('|'), 'utf8').digest('hex');
   return `${KEY_VERSION}-${hex.slice(0, 16)}`;
@@ -54,14 +54,14 @@ export function splitSentences(text) {
   return out;
 }
 
-export function buildRequest(text, options = {}) {
+export function buildRequest(text, { voiceId = '', modelId = '', speed = 1, format = '', language = '' } = {}) {
   return {
     text: String(text ?? ''),
-    voice_id: String(firstDefined(options.voiceId, options.voiceID)),
-    model_id: String(firstDefined(options.modelId, options.modelID)),
-    speed: Number(firstDefined(options.speed, 1)),
-    format: String(firstDefined(options.format, options.outputFormat)),
-    language: String(firstDefined(options.language, options.lang)),
+    voice_id: String(voiceId ?? ''),
+    model_id: String(modelId ?? ''),
+    speed: Number(speed ?? 1),
+    format: String(format ?? ''),
+    language: String(language ?? ''),
   };
 }
 
@@ -85,11 +85,22 @@ function parseSentenceCount(headers) {
   return Number.isInteger(count) ? count : 0;
 }
 
+function isRetryableStatus(status) {
+  return status === 429 || status >= 500;
+}
+
+function toAudioBuffer(value) {
+  if (value instanceof ArrayBuffer) return value;
+  if (ArrayBuffer.isView(value)) return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+  throw new TypeError('directFetch must resolve to an ArrayBuffer or a typed array');
+}
+
 export class Client {
-  constructor({ endpoints = [], appToken = '', fetchImpl = globalThis.fetch } = {}) {
+  constructor({ endpoints = [], appToken = '', fetchImpl = globalThis.fetch, directFetch = null } = {}) {
     this.endpoints = [...endpoints].map(stripTrailingSlash).filter((endpoint) => endpoint !== '');
     this.appToken = appToken;
     this.fetchImpl = fetchImpl;
+    this.directFetch = directFetch;
     this.latencies = new Map();
     this.memory = new Map();
   }
@@ -140,7 +151,7 @@ export class Client {
         region: '',
       };
     }
-    if (this.endpoints.length === 0) throw new Error('no synthesize endpoints configured');
+    const request = buildRequest(text, options);
     const failures = [];
     for (const endpoint of this.endpoints) {
       const started = Date.now();
@@ -151,7 +162,7 @@ export class Client {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${this.appToken}`,
           },
-          body: JSON.stringify(buildRequest(text, options)),
+          body: JSON.stringify(request),
         });
         const latencyMs = Date.now() - started;
         if (res.status === 200 || res.status === 206) {
@@ -170,7 +181,21 @@ export class Client {
             latencyMs,
           };
         }
-        failures.push({ endpoint, code: res.status, latencyMs });
+        const failure = { endpoint, code: res.status, latencyMs };
+        if (!isRetryableStatus(res.status)) {
+          return {
+            audio: new ArrayBuffer(0),
+            source: 'proxy',
+            statuses: parseStatuses(res.headers),
+            sentenceCount: parseSentenceCount(res.headers),
+            key,
+            endpoint,
+            region: res.headers?.get?.('x-region') ?? '',
+            latencyMs,
+            failures: [failure],
+          };
+        }
+        failures.push(failure);
       } catch (error) {
         failures.push({
           endpoint,
@@ -180,9 +205,34 @@ export class Client {
         });
       }
     }
-    const detail = failures.map((entry) => `${entry.endpoint} code=${entry.code}`).join('; ');
-    const error = new Error(`all synthesize endpoints failed: ${detail}`);
-    error.failures = failures;
-    throw error;
+    const directAudio = this.directFetch
+      ? await Promise.resolve()
+        .then(() => this.directFetch(String(text ?? '')))
+        .then(toAudioBuffer)
+        .catch(() => null)
+      : null;
+    if (directAudio !== null) {
+      this.memory.set(key, { audio: directAudio.slice(0), statuses: [], sentenceCount: 0 });
+      return {
+        audio: directAudio,
+        source: 'direct',
+        statuses: [],
+        sentenceCount: 0,
+        key,
+        endpoint: null,
+        region: '',
+        failures,
+      };
+    }
+    return {
+      audio: new ArrayBuffer(0),
+      source: 'system',
+      statuses: [],
+      sentenceCount: 0,
+      key,
+      endpoint: null,
+      region: '',
+      failures,
+    };
   }
 }

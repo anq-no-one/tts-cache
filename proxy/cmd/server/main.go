@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -49,7 +50,8 @@ func main() {
 	}
 	store := cache.NewStore(cfg.CacheDir)
 	store.MaxBytes = maxBytes
-	srv := proxyhttp.NewServer(cfg, store, upstream.ElevenLabsCompat{}, auth.NewStore(cfg.CacheDir, invites))
+	tokensFile := env("TOKENS_FILE", filepath.Join(cfg.CacheDir, "tokens.json"))
+	srv := proxyhttp.NewServer(cfg, store, upstream.ElevenLabsCompat{}, auth.NewStore(tokensFile, invites))
 	log.Printf("tts-cache-proxy listening on :%s cache=%s", port, cfg.CacheDir)
 	log.Fatal(http.ListenAndServe(":"+port, srv.Handler()))
 }

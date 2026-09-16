@@ -38,7 +38,7 @@ type Server struct {
 	tokens  *auth.Store
 	limiter *rateLimiter
 
-	inflight callGroup
+	coalescer flightGroup
 
 	hits        atomic.Int64
 	miss        atomic.Int64
@@ -245,7 +245,7 @@ func (s *Server) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 				statuses[i].Status = statusHit
 				return
 			}
-			got, err := s.inflight.Do(key, func() ([]byte, error) {
+			got, err := s.coalescer.Coalesce(key, func() ([]byte, error) {
 				if cached, ok := s.store.Get(key); ok {
 					return cached, nil
 				}

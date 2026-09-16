@@ -75,6 +75,12 @@ func (s *DiskStore) Get(key string) ([]byte, bool) {
 }
 
 func (s *DiskStore) Put(key string, audio []byte, meta Meta) error {
+	if s.MaxBytes > 0 && int64(len(audio)) > s.MaxBytes {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.removeLocked(key)
+		return nil
+	}
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		return err
 	}

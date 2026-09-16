@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0 - 2026-09-16
+
 - Auth: apps register with an invitation code and get a revocable
   bearer token (`POST /v1/register`, `DELETE /v1/tokens/{id}`).
   Synthesis needs the token; revocation needs the admin token.

@@ -5,6 +5,7 @@ import Testing
 
 final class StubURLProtocol: URLProtocol {
     static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+    static var delay: ((URLRequest) -> TimeInterval)?
     static var seen: [URLRequest] = []
     static let lock = NSLock()
 
@@ -15,14 +16,26 @@ final class StubURLProtocol: URLProtocol {
     override func startLoading() {
         Self.lock.lock()
         Self.seen.append(request)
+        let handler = Self.handler
+        let delay = Self.delay?(request) ?? 0
         Self.lock.unlock()
-        do {
-            let (response, data) = try Self.handler!(request)
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
-        } catch {
-            client?.urlProtocol(self, didFailWithError: error)
+        let respond = { [request] in
+            do {
+                let (response, data) = try handler!(request)
+                self.client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                self.client?.urlProtocol(self, didLoad: data)
+                self.client?.urlProtocolDidFinishLoading(self)
+            } catch {
+                self.client?.urlProtocol(self, didFailWithError: error)
+            }
+        }
+        if delay > 0 {
+            Thread.detachNewThread {
+                Thread.sleep(forTimeInterval: delay)
+                respond()
+            }
+        } else {
+            respond()
         }
     }
 
@@ -32,6 +45,7 @@ final class StubURLProtocol: URLProtocol {
         lock.lock()
         seen = []
         handler = nil
+        delay = nil
         lock.unlock()
     }
 
@@ -65,11 +79,11 @@ struct TTSClientTests {
 
     @Test func failoverTriesEndpointsInLatencyOrder() async {
         StubURLProtocol.reset()
+        StubURLProtocol.delay = { request in
+            request.url?.path == "/healthz" && request.url?.host == "b.example" ? 0.1 : 0
+        }
         StubURLProtocol.handler = { request in
             if request.url?.path == "/healthz" {
-                if request.url?.host == "b.example" {
-                    Thread.sleep(forTimeInterval: 0.1)
-                }
                 return okResponse(for: request)
             }
             #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-token")
@@ -151,6 +165,99 @@ struct TTSClientTests {
         #expect(result.source == .direct)
         #expect(result.audio == Data("direct".utf8))
         #expect(result.failure?.statusCode == 502)
+    }
+
+    @Test func regionHeaderPopulatesResult() async {
+        StubURLProtocol.reset()
+        StubURLProtocol.handler = { request in
+            if request.url?.path == "/healthz" {
+                return okResponse(for: request)
+            }
+            return okResponse(for: request, headers: ["X-Region": "eu-west"], body: Data("audio".utf8))
+        }
+        let client = TTSClient(endpoints: [a], appToken: "test-token", session: makeStubSession())
+        let config = TTSCacheConfig(baseURL: a, voiceID: "v1")
+        let result = await client.synthesize(text: "Hello.", config: config)
+        #expect(result.source == .proxy)
+        #expect(result.region == "eu-west")
+    }
+
+    @Test func missingRegionHeaderIsNil() async {
+        StubURLProtocol.reset()
+        StubURLProtocol.handler = { request in
+            if request.url?.path == "/healthz" {
+                return okResponse(for: request)
+            }
+            return okResponse(for: request, body: Data("audio".utf8))
+        }
+        let client = TTSClient(endpoints: [a], appToken: "test-token", session: makeStubSession())
+        let config = TTSCacheConfig(baseURL: a, voiceID: "v1")
+        let result = await client.synthesize(text: "Hello.", config: config)
+        #expect(result.source == .proxy)
+        #expect(result.region == nil)
+    }
+
+    @Test func badRequestReturnsImmediatelyWithoutFailover() async {
+        StubURLProtocol.reset()
+        StubURLProtocol.handler = { request in
+            if request.url?.path == "/healthz" {
+                return okResponse(for: request)
+            }
+            return okResponse(for: request, status: 400, body: Data("bad".utf8))
+        }
+        let client = TTSClient(
+            endpoints: [a, b],
+            appToken: "test-token",
+            session: makeStubSession(),
+            directFetch: { _ in Data("direct".utf8) }
+        )
+        let config = TTSCacheConfig(baseURL: a, voiceID: "v1")
+        let result = await client.synthesize(text: "Hello.", config: config)
+        #expect(result.source == .proxy)
+        #expect(result.audio.isEmpty)
+        #expect(result.failure?.statusCode == 400)
+        #expect(StubURLProtocol.posts().count == 1)
+        #expect(result.failure?.host == StubURLProtocol.posts().first?.url?.host)
+    }
+
+    @Test func unauthorizedReturnsImmediatelyWithRegion() async {
+        StubURLProtocol.reset()
+        StubURLProtocol.handler = { request in
+            if request.url?.path == "/healthz" {
+                return okResponse(for: request)
+            }
+            return okResponse(for: request, status: 401, headers: ["X-Region": "us-east"], body: Data("nope".utf8))
+        }
+        let client = TTSClient(endpoints: [a, b], appToken: "test-token", session: makeStubSession())
+        let config = TTSCacheConfig(baseURL: a, voiceID: "v1")
+        let result = await client.synthesize(text: "Hello.", config: config)
+        #expect(result.source == .proxy)
+        #expect(result.audio.isEmpty)
+        #expect(result.failure?.statusCode == 401)
+        #expect(result.region == "us-east")
+        #expect(StubURLProtocol.posts().count == 1)
+    }
+
+    @Test func rateLimitedFailsOverToNextEndpoint() async {
+        StubURLProtocol.reset()
+        StubURLProtocol.handler = { request in
+            if request.url?.path == "/healthz" {
+                let status = request.url?.host == "b.example" ? 500 : 200
+                return okResponse(for: request, status: status)
+            }
+            if request.url?.host == "a.example" {
+                return okResponse(for: request, status: 429, body: Data("slow".utf8))
+            }
+            return okResponse(for: request, headers: ["X-Region": "eu-west"], body: Data("audio-b".utf8))
+        }
+        let client = TTSClient(endpoints: [a, b], appToken: "test-token", session: makeStubSession())
+        let config = TTSCacheConfig(baseURL: a, voiceID: "v1")
+        let result = await client.synthesize(text: "Hello.", config: config)
+        #expect(result.source == .proxy)
+        #expect(result.audio == Data("audio-b".utf8))
+        #expect(result.failure == nil)
+        #expect(result.region == "eu-west")
+        #expect(StubURLProtocol.posts().map { $0.url?.host } == ["a.example", "b.example"])
     }
 
     @Test func systemSilenceWhenNoDirectFetch() async {

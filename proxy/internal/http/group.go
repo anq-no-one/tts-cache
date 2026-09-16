@@ -2,36 +2,36 @@ package http
 
 import "sync"
 
-type call struct {
+type flight struct {
 	done  chan struct{}
 	value []byte
 	err   error
 }
 
-type callGroup struct {
-	mu    sync.Mutex
-	calls map[string]*call
+type flightGroup struct {
+	mu      sync.Mutex
+	flights map[string]*flight
 }
 
-func (g *callGroup) Do(key string, fn func() ([]byte, error)) ([]byte, error) {
+func (g *flightGroup) Coalesce(key string, fn func() ([]byte, error)) ([]byte, error) {
 	g.mu.Lock()
-	if g.calls == nil {
-		g.calls = map[string]*call{}
+	if g.flights == nil {
+		g.flights = map[string]*flight{}
 	}
-	if c, ok := g.calls[key]; ok {
+	if f, ok := g.flights[key]; ok {
 		g.mu.Unlock()
-		<-c.done
-		return c.value, c.err
+		<-f.done
+		return f.value, f.err
 	}
-	c := &call{done: make(chan struct{})}
-	g.calls[key] = c
+	f := &flight{done: make(chan struct{})}
+	g.flights[key] = f
 	g.mu.Unlock()
 
-	c.value, c.err = fn()
-	close(c.done)
+	f.value, f.err = fn()
+	close(f.done)
 
 	g.mu.Lock()
-	delete(g.calls, key)
+	delete(g.flights, key)
 	g.mu.Unlock()
-	return c.value, c.err
+	return f.value, f.err
 }

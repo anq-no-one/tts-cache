@@ -1,6 +1,10 @@
 package ttscache
 
+import com.sun.net.httpserver.HttpServer
 import java.io.File
+import java.io.IOException
+import java.net.InetSocketAddress
+import java.net.ServerSocket
 
 private data class Vector(val input: String, val normalized: String)
 
@@ -156,5 +160,74 @@ fun main() {
     check(req.jsonBody.contains("\"text\":\"Rest for 30 seconds.\"")) { "request body missing text" }
     println("synthesizeRequest: url and body ok")
 
+    checkNetworking()
+
     println("ALL CONTRACT CHECKS PASSED")
+}
+
+private fun checkNetworking() {
+    val okAudio = byteArrayOf(1, 2, 3, 4)
+    val okStatuses = """[{"index":0,"key":"v1-abc","status":"synthesized"}]"""
+    val partialAudio = byteArrayOf(5, 6)
+    val partialStatuses =
+        """[{"index":0,"key":"v1-abc","status":"hit"},{"index":1,"key":"v1-def","status":"synthesized"}]"""
+    var lastAuth = ""
+
+    val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+    server.createContext("/v1/synthesize") { exchange ->
+        lastAuth = exchange.requestHeaders.getFirst("Authorization") ?: ""
+        exchange.requestBody.use { it.readBytes() }
+        exchange.responseHeaders.set("Content-Type", "audio/mpeg")
+        exchange.responseHeaders.set("X-Sentence-Statuses", okStatuses)
+        exchange.responseHeaders.set("X-Region", "eu-west")
+        exchange.sendResponseHeaders(200, okAudio.size.toLong())
+        exchange.responseBody.use { it.write(okAudio) }
+    }
+    server.createContext("/v1/partial") { exchange ->
+        exchange.requestBody.use { it.readBytes() }
+        exchange.responseHeaders.set("Content-Type", "audio/mpeg")
+        exchange.responseHeaders.set("X-Sentence-Statuses", partialStatuses)
+        exchange.responseHeaders.set("X-Region", "eu-west")
+        exchange.sendResponseHeaders(206, partialAudio.size.toLong())
+        exchange.responseBody.use { it.write(partialAudio) }
+    }
+    server.start()
+    try {
+        val loopback = "http://127.0.0.1:${server.address.port}"
+        val netConfig = TtsCacheConfig(baseUrl = loopback, voiceId = "voice1")
+        val netReq = TtsCache.synthesizeRequest("Hello world.", netConfig)
+
+        val ok = TtsCache.fetchSynthesize("$loopback/v1/synthesize", "test-token", netReq, 2000, 5000)
+        check(ok.statusCode == 200) { "expected 200, got ${ok.statusCode}" }
+        check(ok.audio.contentEquals(okAudio)) { "audio bytes mismatch on 200 path" }
+        check(ok.sentenceStatuses == okStatuses) { "X-Sentence-Statuses mismatch: ${ok.sentenceStatuses}" }
+        check(ok.region == "eu-west") { "X-Region mismatch: ${ok.region}" }
+        check(lastAuth == "Bearer test-token") { "app token not forwarded, got \"$lastAuth\"" }
+        println("fetchSynthesize: 200 path with headers and Bearer token ok")
+
+        val partial = TtsCache.fetchSynthesize("$loopback/v1/partial", "test-token", netReq, 2000, 5000)
+        check(partial.statusCode == 206) { "expected 206, got ${partial.statusCode}" }
+        check(partial.audio.contentEquals(partialAudio)) { "audio bytes mismatch on 206 path" }
+        check(partial.sentenceStatuses == partialStatuses) {
+            "206 statuses mismatch: ${partial.sentenceStatuses}"
+        }
+        check(partial.sentenceStatuses.contains("\"status\":\"hit\"")) { "206 statuses missing hit entry" }
+        check(partial.sentenceStatuses.contains("\"status\":\"synthesized\"")) {
+            "206 statuses missing synthesized entry"
+        }
+        println("fetchSynthesize: 206 partial path with statuses ok")
+    } finally {
+        server.stop(0)
+    }
+
+    val closedPort = ServerSocket(0).use { it.localPort }
+    var failed = false
+    try {
+        val doomed = TtsCache.synthesizeRequest("Hello.", TtsCacheConfig(baseUrl = "http://127.0.0.1:$closedPort", voiceId = "v"))
+        TtsCache.fetchSynthesize("http://127.0.0.1:$closedPort/v1/synthesize", "t", doomed, 500, 500)
+    } catch (e: IOException) {
+        failed = true
+    }
+    check(failed) { "expected IOException on connection failure" }
+    println("fetchSynthesize: connection-failure path raises IOException ok")
 }

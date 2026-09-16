@@ -17,6 +17,8 @@
 ```sh
 cd proxy && go test ./...
 cd swift && swift test
+cd js && node --test "test/*.test.js"
+cd kotlin && kotlinc src/main/kotlin/ttscache/TtsCache.kt src/test/kotlin/ttscache/ContractCheck.kt -include-runtime -d /tmp/tts-kotlin.jar && java -jar /tmp/tts-kotlin.jar
 ```
 
 Both stay green after every slice. New proxy behavior needs a test

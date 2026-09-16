@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -49,7 +50,7 @@ func testConfig(dir string) proxyhttp.Config {
 
 func newTestServer(t *testing.T, cfg proxyhttp.Config, fake *fakeSynth) (*proxyhttp.Server, string) {
 	t.Helper()
-	tokens := auth.NewStore(cfg.CacheDir, []string{"invite-1"})
+	tokens := auth.NewStore(filepath.Join(cfg.CacheDir, "tokens.json"), []string{"invite-1"})
 	srv := proxyhttp.NewServer(cfg, cache.NewStore(cfg.CacheDir), fake, tokens)
 	_, raw, err := tokens.Issue("invite-1", "test-app")
 	if err != nil {
@@ -152,6 +153,26 @@ func TestAllFailedSentencesKeepBadGateway(t *testing.T) {
 	code, _, _ := postRaw(t, srv, token, "Only sentence.")
 	if code != http.StatusBadGateway {
 		t.Fatalf("expected 502 when nothing is available, got %d", code)
+	}
+}
+
+func TestAllFailedKeepsStatusHeaders(t *testing.T) {
+	dir := t.TempDir()
+	fake := &fakeSynth{failOn: map[string]bool{"Only sentence.": true}}
+	cfg := testConfig(dir)
+	cfg.Region = "eu-west"
+	srv, token := newTestServer(t, cfg, fake)
+
+	code, header, _ := postRaw(t, srv, token, "Only sentence.")
+	if code != http.StatusBadGateway {
+		t.Fatalf("expected 502 when nothing is available, got %d", code)
+	}
+	rows := statusesOf(t, header)
+	if len(rows) != 1 || rows[0].Status != "error" || rows[0].Error == "" {
+		t.Fatalf("502 must keep per-sentence statuses, got %+v", rows)
+	}
+	if got := header.Get("X-Region"); got != "eu-west" {
+		t.Fatalf("502 must keep X-Region, got %q", got)
 	}
 }
 
@@ -348,7 +369,7 @@ func (s *stubStore) Bytes() int64 {
 func TestServerWorksWithAnyStoreBackend(t *testing.T) {
 	dir := t.TempDir()
 	cfg := testConfig(dir)
-	tokens := auth.NewStore(cfg.CacheDir, []string{"invite-1"})
+	tokens := auth.NewStore(filepath.Join(cfg.CacheDir, "tokens.json"), []string{"invite-1"})
 	srv := proxyhttp.NewServer(cfg, &stubStore{}, &fakeSynth{}, tokens)
 	_, raw, err := tokens.Issue("invite-1", "stub-app")
 	if err != nil {

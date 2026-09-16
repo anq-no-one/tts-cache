@@ -18,9 +18,9 @@ describe('golden key and pure helpers', () => {
     assert.equal(cacheKey(goldenParams()), 'v1-feab4a17bc7070e8');
   });
 
-  it('accepts capitalized ID aliases', () => {
+  it('uses canonical fields only, aliases are ignored', () => {
     assert.equal(
-      cacheKey({ ...goldenParams(), voiceId: undefined, voiceID: 'v1' }),
+      cacheKey({ ...goldenParams(), voiceID: 'other', modelID: 'other', outputFormat: 'other', lang: 'other' }),
       'v1-feab4a17bc7070e8',
     );
   });
@@ -63,5 +63,12 @@ describe('golden key and pure helpers', () => {
       format: '',
       language: 'en',
     });
+  });
+
+  it('ignores field aliases when building the POST JSON body', () => {
+    const body = buildRequest('Hi there.', { voiceId: 'v1', voiceID: 'other', outputFormat: 'other', lang: 'other' });
+    assert.equal(body.voice_id, 'v1');
+    assert.equal(body.format, '');
+    assert.equal(body.language, '');
   });
 });

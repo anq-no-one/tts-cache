@@ -80,7 +80,7 @@ func TestReloadRebuildsIndex(t *testing.T) {
 	}
 }
 
-func TestOversizeSingleEntryStillStored(t *testing.T) {
+func TestOversizeEntryNotStored(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
 	s.MaxBytes = 10
@@ -88,12 +88,19 @@ func TestOversizeSingleEntryStillStored(t *testing.T) {
 	putForTest(t, s, "small", 5)
 	putForTest(t, s, "big", 100)
 
-	got, ok := s.Get("big")
-	if !ok || len(got) != 100 {
-		t.Fatalf("oversize entry must still be stored, ok=%v len=%d", ok, len(got))
+	if _, ok := s.Get("big"); ok {
+		t.Fatal("oversize entry must not be cached")
 	}
-	if _, ok := s.Get("small"); ok {
-		t.Fatal("small entry must have been evicted to fit oversize entry")
+	if got := s.Bytes(); got > s.MaxBytes {
+		t.Fatalf("store over cap after oversize put: %d bytes", got)
+	}
+	for _, name := range []string{Filename("big"), MetaFilename("big")} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("oversize file %s must be absent from disk", name)
+		}
+	}
+	if _, ok := s.Get("small"); !ok {
+		t.Fatal("small entry must survive the rejected oversize put")
 	}
 }
 

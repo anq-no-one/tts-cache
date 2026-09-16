@@ -88,6 +88,8 @@ UPSTREAM_API_KEY=your-key docker compose up --build
 
 - `PORT`, default `8080`
 - `CACHE_DIR`, default `./data`
+- `TOKENS_FILE`, default `<CACHE_DIR>/tokens.json`. Points at the app-token
+  store, so it can live outside the cache volume if needed
 - `UPSTREAM_BASE_URL`, default Fish Audio compat endpoint
 - `UPSTREAM_API_KEY`, no default
 - `DEFAULT_MODEL`, `DEFAULT_FORMAT`, `DEFAULT_LANG`

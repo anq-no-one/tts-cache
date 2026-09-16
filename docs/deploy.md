@@ -111,6 +111,11 @@ against the server-authoritative sentence list), `X-Region`, and
 that is available; all failed gives `502`. Empty or over-long input
 gives `400` / `413`; bad token gives `401`.
 
+Per-sentence status rides in the `X-Sentence-Statuses` header rather
+than the body because the body carries audio. The header grows with
+the sentence count, but `MAX_TEXT_CHARS` caps the text length and
+therefore the sentence count, so the header size stays bounded.
+
 Check metrics:
 
 ```sh

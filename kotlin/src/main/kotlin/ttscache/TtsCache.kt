@@ -1,5 +1,7 @@
 package ttscache
 
+import java.net.HttpURLConnection
+import java.net.URL
 import java.security.MessageDigest
 import java.util.Locale
 
@@ -15,6 +17,13 @@ data class TtsCacheConfig(
 data class SynthesizeRequest(
     val url: String,
     val jsonBody: String
+)
+
+data class SynthesizeResponse(
+    val statusCode: Int,
+    val audio: ByteArray,
+    val sentenceStatuses: String,
+    val region: String
 )
 
 object TtsCache {
@@ -81,6 +90,45 @@ object TtsCache {
             append("\"}")
         }
         return SynthesizeRequest(url, body)
+    }
+
+    fun fetchSynthesize(
+        endpointUrl: String,
+        appToken: String,
+        request: SynthesizeRequest,
+        connectTimeoutMs: Int = 5000,
+        readTimeoutMs: Int = 30000
+    ): SynthesizeResponse {
+        val connection = URL(endpointUrl).openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = "POST"
+            connection.connectTimeout = connectTimeoutMs
+            connection.readTimeout = readTimeoutMs
+            connection.doOutput = true
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.setRequestProperty("Accept", "audio/mpeg")
+            connection.setRequestProperty("Authorization", "Bearer $appToken")
+            val body = request.jsonBody.toByteArray(Charsets.UTF_8)
+            connection.outputStream.use { it.write(body) }
+            val status = connection.responseCode
+            val stream = if (status < 400) connection.inputStream else connection.errorStream
+            val audio = stream?.readBytes() ?: ByteArray(0)
+            return SynthesizeResponse(
+                statusCode = status,
+                audio = audio,
+                sentenceStatuses = responseHeader(connection, "X-Sentence-Statuses"),
+                region = responseHeader(connection, "X-Region")
+            )
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun responseHeader(connection: HttpURLConnection, name: String): String {
+        connection.headerFields.forEach { (key, values) ->
+            if (key != null && key.equals(name, ignoreCase = true)) return values?.firstOrNull() ?: ""
+        }
+        return ""
     }
 
     private fun numberLiteral(speed: Double): String {
