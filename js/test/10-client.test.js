@@ -245,4 +245,58 @@ describe('proxy client networking', () => {
     assert.equal(second.source, 'memory');
     assert.deepEqual(Array.from(new Uint8Array(second.audio)), [4, 5]);
   });
+
+  it('treats a malformed statuses header as no statuses', async () => {
+    const fetchImpl = async () => ({
+      ok: true,
+      status: 200,
+      headers: headersOf({ 'X-Sentence-Statuses': 'not-json{{{', 'X-Sentence-Count': 'two' }),
+      arrayBuffer: async () => audioBytes(1),
+    });
+    const client = new Client({ endpoints: ['https://a.example'], appToken: APP_TOKEN, fetchImpl });
+
+    const result = await client.synthesize('Hi.', { voiceId: 'v1' });
+
+    assert.equal(result.source, 'proxy');
+    assert.deepEqual(result.statuses, []);
+    assert.equal(result.sentenceCount, 0);
+  });
+
+  it('falls back to system when directFetch resolves garbage', async () => {
+    const fetchImpl = async () => proxyResponse({ status: 500 });
+    const client = new Client({
+      endpoints: ['https://a.example'],
+      appToken: APP_TOKEN,
+      fetchImpl,
+      directFetch: async () => 'not-audio',
+    });
+
+    const result = await client.synthesize('Hi.', { voiceId: 'v1' });
+
+    assert.equal(result.source, 'system');
+    assert.equal(result.audio.byteLength, 0);
+  });
+
+  it('accepts a typed array from directFetch', async () => {
+    const fetchImpl = async () => proxyResponse({ status: 500 });
+    const client = new Client({
+      endpoints: ['https://a.example'],
+      appToken: APP_TOKEN,
+      fetchImpl,
+      directFetch: async () => Uint8Array.from([7, 8]),
+    });
+
+    const result = await client.synthesize('Hi.', { voiceId: 'v1' });
+
+    assert.equal(result.source, 'direct');
+    assert.deepEqual(Array.from(new Uint8Array(result.audio)), [7, 8]);
+  });
+
+  it('reports measured latency per endpoint', async () => {
+    const fetchImpl = async () => proxyResponse({});
+    const client = new Client({ endpoints: ['https://a.example'], appToken: APP_TOKEN, fetchImpl });
+    await client.measureLatency();
+
+    assert.ok(Number.isFinite(client.latencyOf('https://a.example/')));
+  });
 });

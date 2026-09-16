@@ -140,3 +140,52 @@ func TestUnlimitedKeepsCurrentBehavior(t *testing.T) {
 		t.Fatal("b must be present")
 	}
 }
+
+func TestExternalFileCountedOnFirstRead(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	dropped := make([]byte, 25)
+	if err := os.WriteFile(filepath.Join(dir, Filename("ext")), dropped, 0o644); err != nil {
+		t.Fatalf("drop file: %v", err)
+	}
+	got, ok := s.Get("ext")
+	if !ok || len(got) != len(dropped) {
+		t.Fatalf("external file must be served, ok=%v len=%d", ok, len(got))
+	}
+	if s.Bytes() != int64(len(dropped)) {
+		t.Fatalf("bytes must account the external file, got %d", s.Bytes())
+	}
+	if _, ok := s.Get("missing"); ok {
+		t.Fatal("missing key must miss")
+	}
+}
+
+func TestDiskHitWithoutMetaStillServes(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	putForTest(t, s, "nometa", 12)
+	if err := os.Remove(filepath.Join(dir, MetaFilename("nometa"))); err != nil {
+		t.Fatalf("remove meta: %v", err)
+	}
+	fresh := NewStore(dir)
+	if _, ok := fresh.Get("nometa"); !ok {
+		t.Fatal("disk hit without meta must still serve")
+	}
+}
+
+func TestCorruptMetaFallsBackToMtime(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	putForTest(t, s, "corrupt", 12)
+	if err := os.WriteFile(filepath.Join(dir, MetaFilename("corrupt")), []byte("not-json"), 0o644); err != nil {
+		t.Fatalf("corrupt meta: %v", err)
+	}
+	fresh := NewStore(dir)
+	got, ok := fresh.Get("corrupt")
+	if !ok || len(got) != 12 {
+		t.Fatalf("corrupt meta must fall back to serving the file, ok=%v", ok)
+	}
+	if fresh.Bytes() != 12 {
+		t.Fatalf("bytes must count the file, got %d", fresh.Bytes())
+	}
+}

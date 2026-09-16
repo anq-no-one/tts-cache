@@ -24,10 +24,16 @@ type fakeSynth struct {
 	calls   atomic.Int64
 	failOn  map[string]bool
 	delayOn map[string]time.Duration
+
+	mu      sync.Mutex
+	lastReq upstream.Request
 }
 
 func (f *fakeSynth) Synthesize(ctx context.Context, r upstream.Request) ([]byte, error) {
 	f.calls.Add(1)
+	f.mu.Lock()
+	f.lastReq = r
+	f.mu.Unlock()
 	if d, ok := f.delayOn[r.Text]; ok {
 		select {
 		case <-ctx.Done():
@@ -197,6 +203,45 @@ func TestSlowSentenceDoesNotBlockOthers(t *testing.T) {
 	}
 }
 
+func TestCustomSoundParamsReachUpstream(t *testing.T) {
+	dir := t.TempDir()
+	fake := &fakeSynth{}
+	srv, token := newTestServer(t, testConfig(dir), fake)
+
+	body, _ := json.Marshal(map[string]any{
+		"text": "Hi.", "voice_id": "v1",
+		"model_id": "custom-m", "format": "custom-f", "language": "fr", "speed": 1.5,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/synthesize", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.lastReq.ModelID != "custom-m" || fake.lastReq.Format != "custom-f" || fake.lastReq.Speed != 1.5 {
+		t.Fatalf("custom params must reach upstream: %+v", fake.lastReq)
+	}
+}
+
+func TestFreshMetricsReportZeroHitRate(t *testing.T) {
+	dir := t.TempDir()
+	srv, _ := newTestServer(t, testConfig(dir), &fakeSynth{})
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("bad metrics: %v", err)
+	}
+	if out["hit_rate"] != float64(0) {
+		t.Fatalf("fresh hit rate must be 0, got %v", out["hit_rate"])
+	}
+}
+
 func TestSplitSentences(t *testing.T) {
 	got := proxyhttp.SplitSentences("Hello. How are you? Fine")
 	if len(got) != 3 {
@@ -282,6 +327,33 @@ func TestRevokedTokenStopsWorking(t *testing.T) {
 	}
 	if code, _, _ := postRaw(t, srv, raw, "Hello."); code != http.StatusUnauthorized {
 		t.Fatalf("revoked token must be 401, got %d", code)
+	}
+}
+
+func TestRegisterRejectsBadInput(t *testing.T) {
+	dir := t.TempDir()
+	srv, _ := newTestServer(t, testConfig(dir), &fakeSynth{})
+
+	for _, body := range []string{"not-json", `{"invitation_code":"invite-1"}`, `{"app_name":""}`} {
+		req := httptest.NewRequest(http.MethodPost, "/v1/register", bytes.NewReader([]byte(body)))
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("body %q must be 400, got %d", body, rec.Code)
+		}
+	}
+}
+
+func TestRevokeUnknownTokenIsNotFound(t *testing.T) {
+	dir := t.TempDir()
+	srv, _ := newTestServer(t, testConfig(dir), &fakeSynth{})
+
+	req := httptest.NewRequest(http.MethodDelete, "/v1/tokens/nope", nil)
+	req.Header.Set("Authorization", "Bearer admin-1")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown token must be 404, got %d", rec.Code)
 	}
 }
 

@@ -58,3 +58,15 @@ func TestKeyChangesOnSoundFields(t *testing.T) {
 		}
 	}
 }
+
+func TestZeroSpeedHasStableDistinctKey(t *testing.T) {
+	a := cache.Key(cache.Params{Text: "Hi.", VoiceID: "v", Speed: 0})
+	b := cache.Key(cache.Params{Text: "Hi.", VoiceID: "v", Speed: 0})
+	c := cache.Key(cache.Params{Text: "Hi.", VoiceID: "v", Speed: 1})
+	if a != b {
+		t.Fatalf("zero speed must be deterministic: %q vs %q", a, b)
+	}
+	if a == c {
+		t.Fatalf("zero speed must not collide with 1.000: %q", a)
+	}
+}

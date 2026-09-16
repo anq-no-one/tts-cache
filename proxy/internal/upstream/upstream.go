@@ -7,19 +7,20 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
 type Request struct {
-	Text      string
-	VoiceID   string
-	ModelID   string
-	Speed     float64
-	Format    string
-	APIKey    string
-	BaseURL   string
-	Timeout   time.Duration
-	StreamURL string
+	Text    string
+	VoiceID string
+	ModelID string
+	Speed   float64
+	Format  string
+	APIKey  string
+	BaseURL string
+	Timeout time.Duration
 }
 
 type Synthesizer interface {
@@ -36,13 +37,15 @@ func (e ElevenLabsCompat) Synthesize(ctx context.Context, r Request) ([]byte, er
 	if e.Client == nil {
 		e.Client = &http.Client{Timeout: 30 * time.Second}
 	}
-	url := r.BaseURL + "/text-to-speech/" + r.VoiceID + "?output_format=" + r.Format
+	query := url.Values{}
+	query.Set("output_format", r.Format)
+	endpoint := strings.TrimSuffix(r.BaseURL, "/") + "/text-to-speech/" + url.PathEscape(r.VoiceID) + "?" + query.Encode()
 	body, _ := json.Marshal(map[string]any{
 		"text":           r.Text,
 		"model_id":       r.ModelID,
 		"voice_settings": map[string]any{"speed": r.Speed},
 	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

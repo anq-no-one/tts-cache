@@ -4,7 +4,7 @@ import Testing
 @testable import TTSCache
 
 final class StubURLProtocol: URLProtocol {
-    static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+    static var handler: ((URLRequest) throws -> (URLResponse, Data))?
     static var delay: ((URLRequest) -> TimeInterval)?
     static var seen: [URLRequest] = []
     static let lock = NSLock()
@@ -274,6 +274,89 @@ struct TTSClientTests {
         #expect(result.source == .system)
         #expect(result.audio.isEmpty)
         #expect(result.failure?.host == "a.example")
+        #expect(result.failure?.statusCode == 500)
+    }
+
+    @Test func nonHTTPResponseSkipsEndpoint() async {
+        StubURLProtocol.reset()
+        StubURLProtocol.delay = { request in
+            request.url?.host == "b.example" && request.url?.path == "/healthz" ? 0.1 : 0
+        }
+        StubURLProtocol.handler = { request in
+            if request.url?.path == "/healthz" {
+                return okResponse(for: request)
+            }
+            if request.url?.host == "a.example" {
+                let bare = URLResponse(url: request.url!, mimeType: nil, expectedContentLength: 0, textEncodingName: nil)
+                return (bare, Data("junk".utf8))
+            }
+            return okResponse(for: request, body: Data("audio-b".utf8))
+        }
+        let client = TTSClient(endpoints: [a, b], appToken: "test-token", session: makeStubSession())
+        let config = TTSCacheConfig(baseURL: a, voiceID: "v1")
+        let result = await client.synthesize(text: "Hello.", config: config)
+        #expect(result.source == .proxy)
+        #expect(result.audio == Data("audio-b".utf8))
+        #expect(StubURLProtocol.posts().map { $0.url?.host } == ["a.example", "b.example"])
+    }
+
+    @Test func throwingEndpointFailsOver() async {
+        StubURLProtocol.reset()
+        StubURLProtocol.delay = { request in
+            request.url?.host == "b.example" && request.url?.path == "/healthz" ? 0.1 : 0
+        }
+        StubURLProtocol.handler = { request in
+            if request.url?.path == "/healthz" {
+                return okResponse(for: request)
+            }
+            if request.url?.host == "a.example" {
+                throw URLError(.timedOut)
+            }
+            return okResponse(for: request, body: Data("audio-b".utf8))
+        }
+        let client = TTSClient(endpoints: [a, b], appToken: "test-token", session: makeStubSession())
+        let config = TTSCacheConfig(baseURL: a, voiceID: "v1")
+        let result = await client.synthesize(text: "Hello.", config: config)
+        #expect(result.source == .proxy)
+        #expect(result.audio == Data("audio-b".utf8))
+        #expect(StubURLProtocol.posts().map { $0.url?.host } == ["a.example", "b.example"])
+    }
+
+    @Test func throwingHealthCheckSortsEndpointLast() async {
+        StubURLProtocol.reset()
+        StubURLProtocol.handler = { request in
+            if request.url?.path == "/healthz" {
+                if request.url?.host == "a.example" {
+                    throw URLError(.cannotConnectToHost)
+                }
+                return okResponse(for: request)
+            }
+            return okResponse(for: request, body: Data("audio-b".utf8))
+        }
+        let client = TTSClient(endpoints: [a, b], appToken: "test-token", session: makeStubSession())
+        let config = TTSCacheConfig(baseURL: a, voiceID: "v1")
+        let result = await client.synthesize(text: "Hello.", config: config)
+        #expect(result.source == .proxy)
+        #expect(StubURLProtocol.posts().map { $0.url?.host } == ["b.example"])
+    }
+
+    @Test func throwingDirectFetchGivesSystem() async {
+        StubURLProtocol.reset()
+        StubURLProtocol.handler = { request in
+            if request.url?.path == "/healthz" {
+                return okResponse(for: request)
+            }
+            return okResponse(for: request, status: 500, body: Data("down".utf8))
+        }
+        struct Boom: Error {}
+        let client = TTSClient(
+            endpoints: [a], appToken: "test-token", session: makeStubSession(),
+            directFetch: { _ in throw Boom() }
+        )
+        let config = TTSCacheConfig(baseURL: a, voiceID: "v1")
+        let result = await client.synthesize(text: "Hello.", config: config)
+        #expect(result.source == .system)
+        #expect(result.audio.isEmpty)
         #expect(result.failure?.statusCode == 500)
     }
 }

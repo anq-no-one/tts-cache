@@ -50,3 +50,15 @@ struct Vector: Decodable {
     let parts = TTSCache.splitSentences("Rest for 30 seconds. Next up is push ups.")
     #expect(parts.count == 2)
 }
+
+@Test func splitBlankIsEmpty() {
+    #expect(TTSCache.splitSentences("").isEmpty)
+    #expect(TTSCache.splitSentences("   ").isEmpty)
+}
+
+@Test func audioSourceCodableRoundTrip() throws {
+    for source in [AudioSource.memory, .disk, .proxy, .direct, .system] {
+        let data = try JSONEncoder().encode(source)
+        #expect(try JSONDecoder().decode(AudioSource.self, from: data) == source)
+    }
+}

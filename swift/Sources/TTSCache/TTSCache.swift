@@ -49,12 +49,6 @@ public enum TTSCache {
             }
             return true
         }
-        if out.isEmpty {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                out = [trimmed]
-            }
-        }
         return out
     }
 

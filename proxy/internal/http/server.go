@@ -227,6 +227,25 @@ func (s *Server) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	sentences := SplitSentences(req.Text)
+	audio, statuses := s.fetchSentences(ctx, sentenceParams{
+		VoiceID: req.VoiceID, Model: model, Format: format, Language: lang, Speed: speed,
+	}, sentences)
+	if ctx.Err() != nil {
+		http.Error(w, "request deadline exceeded", http.StatusGatewayTimeout)
+		return
+	}
+	writeAudioResponse(w, audio, statuses)
+}
+
+type sentenceParams struct {
+	VoiceID  string
+	Model    string
+	Format   string
+	Language string
+	Speed    float64
+}
+
+func (s *Server) fetchSentences(ctx context.Context, p sentenceParams, sentences []string) ([][]byte, []sentenceStatus) {
 	audio := make([][]byte, len(sentences))
 	statuses := make([]sentenceStatus, len(sentences))
 	var wg sync.WaitGroup
@@ -235,8 +254,8 @@ func (s *Server) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			defer wg.Done()
 			key := cache.Key(cache.Params{
-				Text: sent, VoiceID: req.VoiceID, ModelID: model,
-				Speed: speed, OutputFormat: format, Language: lang,
+				Text: sent, VoiceID: p.VoiceID, ModelID: p.Model,
+				Speed: p.Speed, OutputFormat: p.Format, Language: p.Language,
 			})
 			statuses[i] = sentenceStatus{Index: i, Key: key}
 			if cached, ok := s.store.Get(key); ok {
@@ -247,27 +266,7 @@ func (s *Server) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			got, err := s.coalescer.Coalesce(key, func() ([]byte, error) {
-				if cached, ok := s.store.Get(key); ok {
-					return cached, nil
-				}
-				s.miss.Add(1)
-				timeout := time.Duration(s.cfg.TimeoutSec) * time.Second
-				if timeout == 0 {
-					timeout = 30 * time.Second
-				}
-				fresh, err := s.synth.Synthesize(ctx, upstream.Request{
-					Text: sent, VoiceID: req.VoiceID, ModelID: model,
-					Speed: speed, Format: format,
-					APIKey: s.cfg.UpstreamKey, BaseURL: s.cfg.UpstreamBase,
-					Timeout: timeout,
-				})
-				if err != nil {
-					return nil, err
-				}
-				_ = s.store.Put(key, fresh, cache.Meta{
-					Text: sent, VoiceID: req.VoiceID, ModelID: model,
-				})
-				return fresh, nil
+				return s.synthesizeFresh(ctx, p, sent, key)
 			})
 			if err != nil {
 				statuses[i].Status = statusError
@@ -279,14 +278,37 @@ func (s *Server) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	wg.Wait()
+	return audio, statuses
+}
 
-	if ctx.Err() != nil {
-		http.Error(w, "request deadline exceeded", http.StatusGatewayTimeout)
-		return
+func (s *Server) synthesizeFresh(ctx context.Context, p sentenceParams, sent, key string) ([]byte, error) {
+	if cached, ok := s.store.Get(key); ok {
+		return cached, nil
 	}
+	s.miss.Add(1)
+	timeout := time.Duration(s.cfg.TimeoutSec) * time.Second
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	fresh, err := s.synth.Synthesize(ctx, upstream.Request{
+		Text: sent, VoiceID: p.VoiceID, ModelID: p.Model,
+		Speed: p.Speed, Format: p.Format,
+		APIKey: s.cfg.UpstreamKey, BaseURL: s.cfg.UpstreamBase,
+		Timeout: timeout,
+	})
+	if err != nil {
+		return nil, err
+	}
+	_ = s.store.Put(key, fresh, cache.Meta{
+		Text: sent, VoiceID: p.VoiceID, ModelID: p.Model,
+	})
+	return fresh, nil
+}
+
+func writeAudioResponse(w http.ResponseWriter, audio [][]byte, statuses []sentenceStatus) {
 	var combined []byte
 	failed := 0
-	for i := range sentences {
+	for i := range statuses {
 		if statuses[i].Status == statusError {
 			failed++
 			continue
@@ -296,9 +318,9 @@ func (s *Server) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 	rawStatuses, _ := json.Marshal(statuses)
 	w.Header().Set("Content-Type", "audio/mpeg")
 	w.Header().Set("X-Cache-Key-Version", cache.KeyVersion)
-	w.Header().Set("X-Sentence-Count", strconv.Itoa(len(sentences)))
+	w.Header().Set("X-Sentence-Count", strconv.Itoa(len(statuses)))
 	w.Header().Set("X-Sentence-Statuses", string(rawStatuses))
-	if failed == len(sentences) {
+	if failed == len(statuses) {
 		http.Error(w, "upstream: "+statuses[0].Error, http.StatusBadGateway)
 		return
 	}
